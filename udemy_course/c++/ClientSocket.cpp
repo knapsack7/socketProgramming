@@ -15,6 +15,7 @@
 #include <errno.h>         // For error handling
 #include <arpa/inet.h>     // For inet_addr function
 #include <iostream>        // For C++ I/O operations
+#include <string>
 
 int main()
 {
@@ -37,28 +38,54 @@ int main()
 
     // Connect to the server
     // This establishes a connection with the server
-    connect(serverSock, (struct sockaddr *)&addr, sizeof(addr));
+    if(connect(serverSock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        std::cout << "Connection failed!" << std::endl;
+        return -1;
+    }
     std::cout << "Connected to server!" << std::endl;
 
-    // Buffer to store received data
-    char buffer[1025];
-    int val;
+    char buffer[1024];
+    std::string message;
 
-    // Read data from the server
-    // Parameters:
-    // - serverSock: Socket file descriptor
-    // - buffer: Buffer to store received data
-    // - 1024: Maximum number of bytes to read
-    if((val = read(serverSock, buffer, 1024)) != 0)
-    {
-        // Null terminate the received data
-        buffer[val] = '\0';
-        std::cout << "Received message from server: " << buffer << std::endl;
+    while(true) {
+        // Get message from user
+        std::cout << "Enter your message (or 'quit' to exit): ";
+        std::getline(std::cin, message);
+
+        // Send message to server
+        if(send(serverSock, message.c_str(), message.length(), 0) == -1) {
+            std::cout << "Error sending message" << std::endl;
+            break;
+        }
+
+        // Check if user wants to quit
+        if(message == "quit") {
+            std::cout << "Client is shutting down" << std::endl;
+            break;
+        }
+
+        // Clear buffer
+        memset(buffer, 0, sizeof(buffer));
+        
+        // Receive response from server
+        int bytesReceived = recv(serverSock, buffer, sizeof(buffer), 0);
+        if(bytesReceived <= 0) {
+            std::cout << "Server disconnected or error occurred" << std::endl;
+            break;
+        }
+        
+        std::cout << "Server says: " << buffer << std::endl;
+
+        // Check if server wants to quit
+        if(strcmp(buffer, "quit") == 0) {
+            std::cout << "Server requested to quit" << std::endl;
+            break;
+        }
     }
 
     // Close the socket connection
     close(serverSock);
-    std::cout << "Socket closed." << std::endl;
+    std::cout << "Connection closed." << std::endl;
 
     return 0;
 }

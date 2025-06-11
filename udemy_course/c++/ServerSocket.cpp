@@ -14,6 +14,7 @@
 #include <string.h>        // For string operations
 #include <sys/types.h>     // For system types
 #include <iostream>        // For C++ I/O operations
+#include <string>
 
 int main()
 {
@@ -24,9 +25,6 @@ int main()
     // Structure to hold server address information
     struct sockaddr_in serverAddr;
     
-    // Message to send to client
-    const char* message = "Hello from C++ server!";
-
     // Create a TCP socket
     // AF_INET: IPv4 protocol
     // SOCK_STREAM: TCP socket type
@@ -57,24 +55,50 @@ int main()
     client = accept(server, (struct sockaddr*)NULL, NULL);
     std::cout << "Client connected!" << std::endl;
 
-    // Send message to client
-    // Parameters:
-    // - client: Client socket file descriptor
-    // - message: Data to send
-    // - strlen(message): Length of data
-    // - 0: Flags (0 means no special flags)
-    if(send(client, message, strlen(message), 0) != strlen(message))
-    {
-        std::cout << "Error sending message to client" << std::endl;
-    }
-    else
-    {
-        std::cout << "Message sent successfully" << std::endl;
+    char buffer[1024];
+    std::string message;
+
+    while(true) {
+        // Clear buffer
+        memset(buffer, 0, sizeof(buffer));
+        
+        // Receive message from client
+        int bytesReceived = recv(client, buffer, sizeof(buffer), 0);
+        if(bytesReceived <= 0) {
+            std::cout << "Client disconnected or error occurred" << std::endl;
+            break;
+        }
+        
+        std::cout << "Client says: " << buffer << std::endl;
+
+        // Check if client wants to quit
+        if(strcmp(buffer, "quit") == 0) {
+            std::cout << "Client requested to quit" << std::endl;
+            break;
+        }
+
+        // Get server's response
+        std::cout << "Enter your message (or 'quit' to exit): ";
+        std::getline(std::cin, message);
+
+        // Send response to client
+        if(send(client, message.c_str(), message.length(), 0) == -1) {
+            std::cout << "Error sending message" << std::endl;
+            break;
+        }
+
+        // Check if server wants to quit
+        if(message == "quit") {
+            std::cout << "Server is shutting down" << std::endl;
+            break;
+        }
     }
 
     // Close the client connection
     close(client);
     std::cout << "Client disconnected" << std::endl;
+    close(server);
+    std::cout << "Server closed" << std::endl;
 
     return 0;
 }
