@@ -45,6 +45,103 @@ while(true) {
    - No inherent direction restrictions
    - Built-in acknowledgment mechanism
 
+## Understanding Message Flow and Blocking Behavior
+
+### Current Implementation Behavior
+When a client sends multiple messages in quick succession, the server processes them one at a time in a sequential manner. This is due to the blocking nature of socket operations.
+
+### Message Flow Example
+```
+Client sends "Hello"
+↓
+Server receives "Hello" (recv blocks until data arrives)
+↓
+Server processes "Hello"
+↓
+Server sends response (send blocks until data is sent)
+↓
+Server can now receive next message
+```
+
+### Why Messages Are Processed Sequentially
+1. **Blocking Socket Operations**
+   - `recv()` blocks until data is available
+   - `send()` blocks until data is sent
+   - Each operation must complete before the next begins
+
+2. **TCP Buffer Behavior**
+   - TCP maintains send and receive buffers
+   - Second message is stored in TCP receive buffer
+   - Server's `recv()` is blocked until first message cycle completes
+   - That's why second message appears only after server responds to first
+
+### Impact on Application
+1. **Current Limitations**
+   - Messages are processed sequentially
+   - No parallel processing
+   - Poor responsiveness
+   - Inefficient resource usage
+
+2. **Real-world Implications**
+   - Not suitable for high-load applications
+   - Poor user experience
+   - Limited scalability
+   - Resource underutilization
+
+### Solutions to Improve Message Handling
+
+1. **Non-blocking Sockets**
+   ```cpp
+   // Set socket to non-blocking mode
+   int flags = fcntl(sockfd, F_GETFL, 0);
+   fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+   ```
+
+2. **I/O Multiplexing**
+   ```cpp
+   // Using select to check for data
+   fd_set readfds;
+   FD_ZERO(&readfds);
+   FD_SET(sockfd, &readfds);
+   
+   if (select(sockfd + 1, &readfds, NULL, NULL, NULL) > 0) {
+       // Data is available to read
+       recv(sockfd, buffer, sizeof(buffer), 0);
+   }
+   ```
+
+3. **Separate Threads**
+   ```cpp
+   // One thread for receiving
+   void receiveThread() {
+       while(true) {
+           recv(sockfd, buffer, sizeof(buffer), 0);
+           // Process received data
+       }
+   }
+   
+   // Another thread for sending
+   void sendThread() {
+       while(true) {
+           // Send data when available
+           send(sockfd, data, strlen(data), 0);
+       }
+   }
+   ```
+
+### When to Use Current Implementation
+1. **Suitable For**
+   - Simple client-server applications
+   - Low traffic scenarios
+   - When simplicity is more important than performance
+   - Learning and testing purposes
+
+2. **Not Suitable For**
+   - High-load applications
+   - Real-time communication
+   - Multiple client handling
+   - Performance-critical systems
+
 ## Current Implementation (Synchronous/Blocking)
 
 ### Blocking Operations
