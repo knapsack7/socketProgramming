@@ -1,341 +1,152 @@
-# TCP Socket Programming Implementation Version v1
+# TCP Chat Application (V2) - Non-blocking Socket Communication
 
-This project demonstrates a synchronous (blocking) TCP client-server implementation in C++ using Berkeley Sockets API. The implementation showcases fundamental network programming concepts and socket communication patterns.
+This project demonstrates a TCP chat application with non-blocking socket communication between a server and client. The application evolved from a basic blocking implementation (V1) to a more robust non-blocking version (V2) that handles multiple operations concurrently.
 
-## Full-Duplex Communication Explained
+## Evolution from V1 to V2
 
-### What is Full-Duplex?
-Full-duplex communication means that both the client and server can send and receive data simultaneously over the same connection. In our implementation, this is achieved through:
+### V1: Basic Blocking Implementation
+The initial version used blocking sockets, which meant:
+- Server could only handle one client at a time
+- Input/output operations would block the entire application
+- No proper handling of terminal input (backspace, control characters)
 
-1. **TCP Socket Nature**
-   - TCP sockets are inherently full-duplex
-   - Each socket has separate send and receive buffers
-   - Data can flow in both directions independently
+### V2: Non-blocking Implementation
+The current version implements non-blocking sockets with proper terminal handling:
+- Server can handle multiple clients (though currently limited to one for simplicity)
+- Non-blocking I/O operations
+- Proper terminal input handling
+- Message queuing system
 
-2. **Implementation Example**
-```cpp
-// Server side
-while(true) {
-    // Can receive data from client
-    recv(client, buffer, sizeof(buffer), 0);
-    
-    // Can send data to client
-    send(client, message, strlen(message), 0);
-}
+## Key Features
 
-// Client side
-while(true) {
-    // Can send data to server
-    send(serverSock, message.c_str(), message.length(), 0);
-    
-    // Can receive data from server
-    recv(serverSock, buffer, sizeof(buffer), 0);
-}
-```
-
-3. **Key Characteristics**
-   - Bidirectional data flow
-   - Independent send and receive operations
-   - No need to wait for one direction to complete
-   - Both parties can communicate simultaneously
-
-4. **TCP Socket Features Enabling Full-Duplex**
-   - Separate send and receive buffers
-   - Independent flow control for each direction
-   - No inherent direction restrictions
-   - Built-in acknowledgment mechanism
-
-## Understanding Message Flow and Blocking Behavior
-
-### Current Implementation Behavior
-When a client sends multiple messages in quick succession, the server processes them one at a time in a sequential manner. This is due to the blocking nature of socket operations.
-
-### Message Flow Example
-```
-Client sends "Hello"
-↓
-Server receives "Hello" (recv blocks until data arrives)
-↓
-Server processes "Hello"
-↓
-Server sends response (send blocks until data is sent)
-↓
-Server can now receive next message
-```
-
-### Why Messages Are Processed Sequentially
-1. **Blocking Socket Operations**
-   - `recv()` blocks until data is available
-   - `send()` blocks until data is sent
-   - Each operation must complete before the next begins
-
-2. **TCP Buffer Behavior**
-   - TCP maintains send and receive buffers
-   - Second message is stored in TCP receive buffer
-   - Server's `recv()` is blocked until first message cycle completes
-   - That's why second message appears only after server responds to first
-
-### Impact on Application
-1. **Current Limitations**
-   - Messages are processed sequentially
-   - No parallel processing
-   - Poor responsiveness
-   - Inefficient resource usage
-
-2. **Real-world Implications**
-   - Not suitable for high-load applications
-   - Poor user experience
-   - Limited scalability
-   - Resource underutilization
-
-### Solutions to Improve Message Handling
-
-1. **Non-blocking Sockets**
+1. **Non-blocking Socket Operations**
    ```cpp
    // Set socket to non-blocking mode
    int flags = fcntl(sockfd, F_GETFL, 0);
    fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
    ```
 
-2. **I/O Multiplexing**
+2. **Proper Terminal Settings**
    ```cpp
-   // Using select to check for data
-   fd_set readfds;
-   FD_ZERO(&readfds);
-   FD_SET(sockfd, &readfds);
-   
-   if (select(sockfd + 1, &readfds, NULL, NULL, NULL) > 0) {
-       // Data is available to read
-       recv(sockfd, buffer, sizeof(buffer), 0);
-   }
+   // Save original terminal settings
+   struct termios oldt, newt;
+   tcgetattr(STDIN_FILENO, &oldt);
+   newt = oldt;
+   newt.c_lflag &= ~(ICANON | ECHO);  // Disable canonical mode and echo
+   newt.c_cc[VMIN] = 1;        // Minimum number of characters for read
+   newt.c_cc[VTIME] = 0;       // Time to wait for data
+   tcsetattr(STDIN_FILENO, TCSANOW, &newt);
    ```
 
-3. **Separate Threads**
+3. **Character-by-Character Input Handling**
    ```cpp
-   // One thread for receiving
-   void receiveThread() {
-       while(true) {
-           recv(sockfd, buffer, sizeof(buffer), 0);
-           // Process received data
-       }
-   }
-   
-   // Another thread for sending
-   void sendThread() {
-       while(true) {
-           // Send data when available
-           send(sockfd, data, strlen(data), 0);
+   if(read(STDIN_FILENO, &c, 1) > 0) {
+       if(c == '\r' || c == '\n') {
+           // Handle Enter key
+       } else if(c == 127 || c == 8) {  // Backspace or Delete
+           if(!currentInput.empty()) {
+               currentInput.pop_back();
+               std::cout << "\b \b" << std::flush;
+           }
+       } else if(c >= 32 && c <= 126) {  // Printable ASCII
+           currentInput += c;
+           std::cout << c << std::flush;
        }
    }
    ```
 
-### When to Use Current Implementation
-1. **Suitable For**
-   - Simple client-server applications
-   - Low traffic scenarios
-   - When simplicity is more important than performance
-   - Learning and testing purposes
+4. **Message Queuing System**
+   ```cpp
+   std::queue<std::string> messageQueue;
+   // ... in the main loop ...
+   while(!messageQueue.empty()) {
+       std::string& message = messageQueue.front();
+       int bytesSent = send(sockfd, message.c_str(), message.length(), 0);
+       if(bytesSent > 0) {
+           messageQueue.pop();
+       }
+   }
+   ```
 
-2. **Not Suitable For**
-   - High-load applications
-   - Real-time communication
-   - Multiple client handling
-   - Performance-critical systems
+## Issues Encountered and Solutions
 
-## Current Implementation (Synchronous/Blocking)
+### 1. Blocking Socket Operations
+**Issue**: Initial implementation used blocking sockets, causing the application to freeze during I/O operations.
 
-### Blocking Operations
-- `send()` and `recv()` functions are blocking operations
-- Server's `recv()` waits until client sends data
-- Client's `recv()` waits until server sends data
-- Creates a "ping-pong" effect where each side waits for the other
+**Solution**: Implemented non-blocking sockets using `fcntl()` and proper error handling for `EAGAIN`/`EWOULDBLOCK`.
 
-### Technical Terms
-- **Synchronous I/O**: Operations block until completion
-- **Blocking Sockets**: Socket operations wait for completion
-- **Full-duplex Communication**: Both sides can send and receive
-- **TCP Socket**: Connection-oriented, reliable communication
-- **Stream Socket**: Byte-stream oriented communication
+### 2. Terminal Input Handling
+**Issue**: Backspace and control characters were being displayed as `^?` instead of being handled properly.
 
-### Current Limitations
-1. **Single Client Handling**
-   - Only one client connection at a time
-   - No concurrent client support
+**Solution**: 
+- Disabled both canonical mode and echo
+- Implemented manual character-by-character input handling
+- Added proper backspace handling with cursor movement
 
-2. **Blocking Operations**
-   - Limits scalability
-   - Resource underutilization
-   - Poor performance under load
+### 3. Connection Timeout
+**Issue**: Client would hang indefinitely when trying to connect to a non-existent server.
 
-3. **Missing Features**
-   - No timeout mechanisms
-   - No error recovery
-   - No connection pooling
-
-## Technical Architecture
-
-### Communication Model
-- **Synchronous (Blocking) I/O**
-  - Socket operations block until completion
-  - `send()` blocks until all data is sent
-  - `recv()` blocks until data is received
-  - Single-threaded execution model
-
-### Protocol Stack
-- **Transport Layer**: TCP (Transmission Control Protocol)
-  - Connection-oriented
-  - Reliable delivery
-  - In-order packet delivery
-  - Flow control
-  - Congestion control
-
-### Socket Types
-- **Stream Sockets (SOCK_STREAM)**
-  - Full-duplex communication
-  - Byte-stream oriented
-  - Guaranteed delivery
-  - Connection-oriented
-
-## Implementation Details
-
-### Server Implementation
+**Solution**: Implemented connection timeout using `select()`:
 ```cpp
-// Socket Creation
-server = socket(AF_INET, SOCK_STREAM, 0);
-
-// Address Configuration
-serverAddr.sin_addr.s_addr = INADDR_ANY;  // Bind to all interfaces
-serverAddr.sin_family = AF_INET;          // IPv4
-serverAddr.sin_port = htons(5555);        // Port in network byte order
-
-// Socket Operations
-bind(server, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
-listen(server, 5);                        // Backlog queue of 5
-client = accept(server, NULL, NULL);      // Blocking call
+if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+    if(errno == EINPROGRESS) {
+        fd_set writefds;
+        struct timeval tv;
+        FD_ZERO(&writefds);
+        FD_SET(sockfd, &writefds);
+        tv.tv_sec = 5;  // 5 second timeout
+        if(select(sockfd + 1, NULL, &writefds, NULL, &tv) > 0) {
+            // Check connection status
+        }
+    }
+}
 ```
 
-### Client Implementation
-```cpp
-// Socket Creation
-serverSock = socket(AF_INET, SOCK_STREAM, 0);
+### 4. Message Synchronization
+**Issue**: Messages could be lost or corrupted due to non-blocking send operations.
 
-// Address Configuration
-addr.sin_addr.s_addr = inet_addr("127.0.0.1");  // Localhost
-addr.sin_family = AF_INET;                      // IPv4
-addr.sin_port = htons(5555);                    // Server port
-
-// Connection Establishment
-connect(serverSock, (struct sockaddr *)&addr, sizeof(addr));
-```
-
-## Potential Improvements
-
-### 1. Non-blocking I/O
-```cpp
-// Set socket to non-blocking mode
-int flags = fcntl(sockfd, F_GETFL, 0);
-fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-```
-
-### 2. I/O Multiplexing
-- **select()**: Traditional method, limited scalability
-- **poll()**: Improved version of select
-- **epoll()**: Most efficient for Linux systems
-
-### 3. Multi-threading
-- Thread pool for client handling
-- Concurrent client support
-- Better resource utilization
-
-### 4. Advanced Features
-- **Connection Pooling**: Reuse connections
-- **Keep-alive**: Maintain long-lived connections
-- **Timeout Handling**: Prevent indefinite blocking
-- **Error Recovery**: Automatic reconnection
-
-## Advanced Concepts
-
-### Event-driven Architecture
-- React to I/O events
-- Non-blocking operations
-- Callback-based processing
-- Efficient resource usage
-
-### I/O Multiplexing
-- Monitor multiple sockets
-- Handle multiple clients
-- Efficient event handling
-- Reduced resource usage
-
-### Connection Management
-- **Connection Pooling**: Reuse connections
-- **Keep-alive**: Maintain connections
-- **Timeout Handling**: Prevent blocking
-- **Error Recovery**: Automatic reconnection
+**Solution**: Implemented a message queue system to ensure reliable message delivery.
 
 ## Building and Running
 
-### Compilation
+1. Compile the server:
 ```bash
-# Server
-g++ ServerSocket.cpp -o server -std=c++11
-
-# Client
-g++ ClientSocket.cpp -o client -std=c++11
+g++ -o server ServerSocket.cpp
 ```
 
-### Execution
+2. Compile the client:
 ```bash
-# Terminal 1 - Server
-./server
+g++ -o client ClientSocket.cpp
+```
 
-# Terminal 2 - Client
+3. Run the server:
+```bash
+./server
+```
+
+4. Run the client:
+```bash
 ./client
 ```
 
-## Technical Terms for Interviews
+## Usage
 
-1. **Socket Programming Concepts**
-   - TCP/IP Protocol Stack
-   - Socket Descriptors
-   - Network Byte Order
-   - Port Binding
-   - Connection States
+1. Start the server first
+2. Start the client
+3. Type messages and press Enter to send
+4. Type 'quit' to exit
 
-2. **I/O Models**
-   - Synchronous vs Asynchronous
-   - Blocking vs Non-blocking
-   - I/O Multiplexing
-   - Event-driven Architecture
+## Future Improvements
 
-3. **Network Programming**
-   - Connection-oriented vs Connectionless
-   - Full-duplex Communication
-   - Buffer Management
-   - Error Handling
+1. Support for multiple clients
+2. Message history
+3. User authentication
+4. Encrypted communication
+5. GUI interface
 
-4. **Performance Terms**
-   - Latency
-   - Throughput
-   - Concurrency
-   - Scalability
-   - Resource Utilization
+## Dependencies
 
-## Future Enhancements
-
-1. **Architecture Improvements**
-   - Implement non-blocking I/O
-   - Add multi-threading support
-   - Implement connection pooling
-
-2. **Feature Additions**
-   - SSL/TLS encryption
-   - Custom protocol implementation
-   - Heartbeat mechanism
-   - Connection timeout handling
-
-3. **Monitoring and Debugging**
-   - Logging system
-   - Performance metrics
-   - Connection state tracking
-   - Error reporting 
+- C++11 or later
+- POSIX-compliant operating system
+- Standard C++ libraries
+- POSIX socket libraries 
